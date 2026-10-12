@@ -426,12 +426,14 @@ u-boot-defconfig: u-boot-overlays
 	mkdir -p $(U_BOOT_OUTPUT)
 	$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_OUTPUT) \
 		qcom_lemans_spl_defconfig
+	$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_OUTPUT) olddefconfig
 
 u-boot: u-boot-overlays
 	@if [ ! -f $(U_BOOT_OUTPUT)/.config ]; then \
 		mkdir -p $(U_BOOT_OUTPUT); \
 		$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_OUTPUT) \
 			qcom_lemans_spl_defconfig; \
+		$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_OUTPUT) olddefconfig; \
 	fi
 	$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_OUTPUT) \
 		-j$(shell nproc) DEVICE_TREE=$(U_BOOT_DEVICE_TREE) \
@@ -447,12 +449,14 @@ u-boot-proper-defconfig: u-boot-overlays
 	mkdir -p $(U_BOOT_PROPER_OUTPUT)
 	$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_PROPER_OUTPUT) \
 		qcom_lemans_defconfig
+	$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_PROPER_OUTPUT) olddefconfig
 
 u-boot-proper: u-boot-overlays
 	@if [ ! -f $(U_BOOT_PROPER_OUTPUT)/.config ]; then \
 		mkdir -p $(U_BOOT_PROPER_OUTPUT); \
 		$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_PROPER_OUTPUT) \
 			qcom_lemans_defconfig; \
+		$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_PROPER_OUTPUT) olddefconfig; \
 	fi
 	$(U_BOOT_EXPORTS) $(MAKE) -C $(U-BOOT_PATH) O=$(U_BOOT_PROPER_OUTPUT) \
 		-j$(shell nproc) DEVICE_TREE=$(U_BOOT_DEVICE_TREE)
