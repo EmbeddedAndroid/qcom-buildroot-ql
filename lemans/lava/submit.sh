@@ -40,7 +40,6 @@ POLL_MAX="${LAVA_POLL_MAX:-180}"   # 180 * 20s = 60 min cap
 [ -f "$TARBALL" ]  || { echo "ERROR: tarball not found: $TARBALL"  >&2; exit 1; }
 [ -f "$JOB_YAML" ] || { echo "ERROR: job yaml not found: $JOB_YAML" >&2; exit 1; }
 command -v claude  >/dev/null || { echo "ERROR: 'claude' CLI not found (needed to mint the upload URL via the LAVA MCP)" >&2; exit 1; }
-command -v jq      >/dev/null || { echo "ERROR: 'jq' not found" >&2; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
@@ -91,8 +90,8 @@ MINT="$(claude -p "Call the lava MCP tool create_artifact_upload with filename=\
   --allowedTools "mcp__lava__create_artifact_upload" \
   --output-format text 2>/dev/null | grep -o '{.*}' | head -1)"
 [ -n "$MINT" ] || { echo "ERROR: could not mint an upload URL via the MCP (is the lava server reachable / token valid?)" >&2; exit 1; }
-GET_URL="$(echo "$MINT" | jq -r '.get_url')"
-UP_TOK="$(echo  "$MINT" | jq -r '.token')"
+GET_URL="$(printf %s "$MINT" | python3 -c 'import json,sys;print(json.load(sys.stdin)["get_url"])')"
+UP_TOK="$(printf %s "$MINT" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')"
 [ -n "$GET_URL" ] && [ "$GET_URL" != null ] || { echo "ERROR: MCP returned no get_url: $MINT" >&2; exit 1; }
 
 # --- 2. upload the tarball -----------------------------------------------------
@@ -138,7 +137,7 @@ fi
 # Substitute the placeholders; use a non-/ delimiter since the URL has slashes.
 sed -e "s|<ARTIFACT_URL>|$GET_URL|g" -e "s|<ARTIFACT_TOKEN>|$UP_TOK|g" \
     "$JOB_YAML" > "$TMP/job.yaml"
-jq -Rs '{definition: .}' "$TMP/job.yaml" > "$TMP/payload.json"
+python3 -c 'import json,sys;open(sys.argv[2],"w").write(json.dumps({"definition":open(sys.argv[1]).read()}))' "$TMP/job.yaml" "$TMP/payload.json"
 
 echo ">> [3/4] validating + submitting to $LAVA_URL ..."
 VAL="$(curl -fsS -X POST -H "Authorization: Token $TOK" -H "Content-Type: application/json" \
@@ -148,7 +147,7 @@ echo "$VAL" | grep -q '"Job valid."' || { echo "ERROR: job did not validate" >&2
 
 SUB="$(curl -fsS -X POST -H "Authorization: Token $TOK" -H "Content-Type: application/json" \
        --data @"$TMP/payload.json" "$LAVA_URL/api/v0.3/jobs/")"
-JOB_ID="$(echo "$SUB" | jq -r '.job_ids[0]')"
+JOB_ID="$(printf %s "$SUB" | python3 -c 'import json,sys;print(json.load(sys.stdin)["job_ids"][0])')"
 [ -n "$JOB_ID" ] && [ "$JOB_ID" != null ] || { echo "ERROR: submit failed: $SUB" >&2; exit 1; }
 echo "   submitted job $JOB_ID  ($LAVA_URL/scheduler/job/$JOB_ID)"
 
@@ -159,8 +158,8 @@ echo ">> [4/4] monitoring job $JOB_ID (flashing, then booting to a login prompt)
 last=""; HEALTH=""
 for _ in $(seq 1 "$POLL_MAX"); do
   J="$(curl -fsS -H "Authorization: Token $TOK" "$LAVA_URL/api/v0.3/jobs/$JOB_ID/")"
-  state="$(echo "$J" | jq -r '.state')"; health="$(echo "$J" | jq -r '.health')"
-  dev="$(echo "$J" | jq -r '.actual_device // "-"')"
+  state="$(printf %s "$J" | python3 -c 'import json,sys;print(json.load(sys.stdin)["state"])')"; health="$(printf %s "$J" | python3 -c 'import json,sys;print(json.load(sys.stdin)["health"])')"
+  dev="$(printf %s "$J" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("actual_device") or "-")')"
   now="$state/$health@$dev"
   [ "$now" != "$last" ] && { echo "   $now"; last="$now"; }
   if [ "$state" = "Finished" ]; then
