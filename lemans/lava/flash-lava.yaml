@@ -73,5 +73,8 @@ actions:
     prompts:
     - 'root@lemans-evk'
     - 'root@(.*):[/~]#'
+    # Buildroot rootfs (this payload ships no rootfs; matches whatever is on the board):
+    - 'buildroot login:'
+    - '# '
     timeout:
       minutes: 15

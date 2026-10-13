@@ -72,5 +72,8 @@ actions:
     - 'root@rb3gen2-core-kit'
     - 'root@qcm6490'
     - 'root@(.*):[/~]#'
+    # Buildroot rootfs (this payload ships no rootfs; matches whatever is on the board):
+    - 'buildroot login:'
+    - '# '
     timeout:
       minutes: 15
