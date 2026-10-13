@@ -39,8 +39,6 @@ POLL_MAX="${LAVA_POLL_MAX:-180}"   # 180 * 20s = 60 min cap
 
 [ -f "$TARBALL" ]  || { echo "ERROR: tarball not found: $TARBALL"  >&2; exit 1; }
 [ -f "$JOB_YAML" ] || { echo "ERROR: job yaml not found: $JOB_YAML" >&2; exit 1; }
-command -v claude  >/dev/null || { echo "ERROR: 'claude' CLI not found (needed to mint the upload URL via the LAVA MCP)" >&2; exit 1; }
-command -v jq      >/dev/null || { echo "ERROR: 'jq' not found" >&2; exit 1; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
@@ -71,28 +69,18 @@ fi
 FN="$(basename "$TARBALL")"
 SZ="$(stat -c%s "$TARBALL")"
 
-# --- 1. mint an upload slot via the LAVA MCP, using headless claude ------------
-# Build a one-server MCP config from ~/.claude.json so the headless session has
-# the lava server regardless of cwd/project.
-python3 - "$CLAUDE_JSON" > "$TMP/mcp.json" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1]))
-cands = [d.get("mcpServers", {})]
-cands += [p.get("mcpServers", {}) for p in d.get("projects", {}).values()]
-for m in cands:
-    if "lava" in m:
-        print(json.dumps({"mcpServers": {"lava": m["lava"]}})); break
-PY
-[ -s "$TMP/mcp.json" ] || { echo "ERROR: could not build a lava MCP config from $CLAUDE_JSON" >&2; exit 1; }
-
-echo ">> [1/4] minting upload URL via LAVA MCP (claude -p create_artifact_upload) ..."
-MINT="$(claude -p "Call the lava MCP tool create_artifact_upload with filename=\"$FN\" and size_bytes=$SZ. Output ONLY a compact JSON object with keys get_url and token. No prose, no code fence." \
-  --mcp-config "$TMP/mcp.json" --strict-mcp-config \
-  --allowedTools "mcp__lava__create_artifact_upload" \
-  --output-format text 2>/dev/null | grep -o '{.*}' | head -1)"
-[ -n "$MINT" ] || { echo "ERROR: could not mint an upload URL via the MCP (is the lava server reachable / token valid?)" >&2; exit 1; }
-GET_URL="$(echo "$MINT" | jq -r '.get_url')"
-UP_TOK="$(echo  "$MINT" | jq -r '.token')"
+# --- 1. mint an upload slot via the LAVA MCP over plain HTTP (no claude) ------
+# submit.sh used to shell out to headless `claude -p` to call the MCP tool; that
+# needs an Anthropic/AICP login the build box does not have, so it always failed
+# with "Not logged in". mint_lava.py does the same create_artifact_upload call
+# directly over the MCP streamable-HTTP endpoint using the X-Lava-Token already
+# in ~/.claude.json (or $LAVA_TOKEN) — no login, no AICP cost, no LLM in a
+# plumbing path.
+echo ">> [1/4] minting upload URL via LAVA MCP (direct HTTP, no claude) ..."
+MINT="$(LAVA_URL="$LAVA_URL" CLAUDE_JSON="$CLAUDE_JSON" ${LAVA_TOKEN:+LAVA_TOKEN="$LAVA_TOKEN"} python3 "$(dirname "$0")/mint_lava.py" "$FN" "$SZ")"
+[ -n "$MINT" ] || { echo "ERROR: could not mint an upload URL via the MCP (token valid? lava reachable?)" >&2; exit 1; }
+GET_URL="$(printf %s "$MINT" | python3 -c 'import json,sys;print(json.load(sys.stdin)["get_url"])')"
+UP_TOK="$(printf %s "$MINT" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')"
 [ -n "$GET_URL" ] && [ "$GET_URL" != null ] || { echo "ERROR: MCP returned no get_url: $MINT" >&2; exit 1; }
 
 # --- 2. upload the tarball -----------------------------------------------------
@@ -138,7 +126,7 @@ fi
 # Substitute the placeholders; use a non-/ delimiter since the URL has slashes.
 sed -e "s|<ARTIFACT_URL>|$GET_URL|g" -e "s|<ARTIFACT_TOKEN>|$UP_TOK|g" \
     "$JOB_YAML" > "$TMP/job.yaml"
-jq -Rs '{definition: .}' "$TMP/job.yaml" > "$TMP/payload.json"
+python3 -c 'import json,sys;open(sys.argv[2],"w").write(json.dumps({"definition":open(sys.argv[1]).read()}))' "$TMP/job.yaml" "$TMP/payload.json"
 
 echo ">> [3/4] validating + submitting to $LAVA_URL ..."
 VAL="$(curl -fsS -X POST -H "Authorization: Token $TOK" -H "Content-Type: application/json" \
@@ -148,7 +136,7 @@ echo "$VAL" | grep -q '"Job valid."' || { echo "ERROR: job did not validate" >&2
 
 SUB="$(curl -fsS -X POST -H "Authorization: Token $TOK" -H "Content-Type: application/json" \
        --data @"$TMP/payload.json" "$LAVA_URL/api/v0.3/jobs/")"
-JOB_ID="$(echo "$SUB" | jq -r '.job_ids[0]')"
+JOB_ID="$(printf %s "$SUB" | python3 -c 'import json,sys;print(json.load(sys.stdin)["job_ids"][0])')"
 [ -n "$JOB_ID" ] && [ "$JOB_ID" != null ] || { echo "ERROR: submit failed: $SUB" >&2; exit 1; }
 echo "   submitted job $JOB_ID  ($LAVA_URL/scheduler/job/$JOB_ID)"
 
@@ -159,8 +147,8 @@ echo ">> [4/4] monitoring job $JOB_ID (flashing, then booting to a login prompt)
 last=""; HEALTH=""
 for _ in $(seq 1 "$POLL_MAX"); do
   J="$(curl -fsS -H "Authorization: Token $TOK" "$LAVA_URL/api/v0.3/jobs/$JOB_ID/")"
-  state="$(echo "$J" | jq -r '.state')"; health="$(echo "$J" | jq -r '.health')"
-  dev="$(echo "$J" | jq -r '.actual_device // "-"')"
+  state="$(printf %s "$J" | python3 -c 'import json,sys;print(json.load(sys.stdin)["state"])')"; health="$(printf %s "$J" | python3 -c 'import json,sys;print(json.load(sys.stdin)["health"])')"
+  dev="$(printf %s "$J" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("actual_device") or "-")')"
   now="$state/$health@$dev"
   [ "$now" != "$last" ] && { echo "   $now"; last="$now"; }
   if [ "$state" = "Finished" ]; then
