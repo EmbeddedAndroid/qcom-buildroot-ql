@@ -1534,7 +1534,7 @@ $(BLOBS_STAMP):
 	@if [ ! -x $(PTOOL_DIR)/.venv/bin/qcom-ptool ]; then \
 		echo "Installing qcom-ptool into venv..."; \
 		python3 -m venv $(PTOOL_DIR)/.venv; \
-		$(PTOOL_DIR)/.venv/bin/pip install -q $(PTOOL_DIR); \
+		$(PTOOL_DIR)/.venv/bin/pip install -q --no-cache-dir $(PTOOL_DIR); \
 	fi
 	@PTOOL=$(PTOOL_DIR)/.venv/bin/qcom-ptool; \
 	PLAT_DIR=$(PTOOL_DIR)/platforms/$(PTOOL_PLATFORM)/ufs; \
