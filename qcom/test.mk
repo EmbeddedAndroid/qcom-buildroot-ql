@@ -8,7 +8,9 @@
 #
 #   TEST        n (default): leave the packages of the tests in QCOM_TESTS out
 #               of the rootfs (xtest stays: common.mk selects it); y: put
-#               them in
+#               them in. The interactive runner /usr/bin/qcom-tests and what
+#               it drives (fastrpc_test, stress-ng, v4l2-ctl, GStreamer with
+#               the V4L2 codec elements) are built whatever TEST is.
 #   QCOM_TESTS  the tests to provide for (default: QCOM_TESTS_ALL); a board
 #               can narrow it to what its plan runs
 #
@@ -55,9 +57,34 @@ QCOM_TESTS_ALL = boot-fingerprint boot-handoff cpu-features cpu-hotplug \
 		 video-codec inference
 QCOM_TESTS ?= $(QCOM_TESTS_ALL)
 
-ifeq ($(TEST),y)
 # qcom-test <test>...: non-empty if QCOM_TESTS names any of them
 qcom-test = $(filter $(1),$(QCOM_TESTS))
+
+# The qcom-tests runner (/usr/bin/qcom-tests) and what it drives are in the
+# rootfs whatever TEST is, as on main: fastrpc_test, stress-ng (the CPU
+# soak), v4l2-ctl and GStreamer with the V4L2 codec elements.
+BR2_PACKAGE_STRESS_NG   ?= y
+BR2_PACKAGE_FASTRPC_EXT ?= y
+
+# GStreamer runs the V4L2 mem2mem codec (v4l2h264enc, v4l2h264dec), fed by
+# videotestsrc and videoconvertscale on the encode side and by qtdemux
+# (isomp4) and h264parse/h265parse (videoparsers) on the decode side.
+BR2_ROOTFS_OVERLAY += $(CURDIR)/qcom/test/overlay
+BR2_INSTALL_LIBSTDCPP                                  ?= y
+BR2_PACKAGE_LIBV4L                                     ?= y
+BR2_PACKAGE_LIBV4L_UTILS                               ?= y
+BR2_PACKAGE_GSTREAMER1                                 ?= y
+BR2_PACKAGE_GST1_PLUGINS_BASE                          ?= y
+BR2_PACKAGE_GST1_PLUGINS_BASE_PLUGIN_VIDEOTESTSRC      ?= y
+BR2_PACKAGE_GST1_PLUGINS_BASE_PLUGIN_VIDEOCONVERTSCALE ?= y
+BR2_PACKAGE_GST1_PLUGINS_GOOD                          ?= y
+BR2_PACKAGE_GST1_PLUGINS_GOOD_PLUGIN_V4L2              ?= y
+BR2_PACKAGE_GST1_PLUGINS_GOOD_PLUGIN_V4L2_PROBE        ?= y
+BR2_PACKAGE_GST1_PLUGINS_GOOD_PLUGIN_ISOMP4            ?= y
+BR2_PACKAGE_GST1_PLUGINS_BAD                           ?= y
+BR2_PACKAGE_GST1_PLUGINS_BAD_PLUGIN_VIDEOPARSERS       ?= y
+
+ifeq ($(TEST),y)
 
 ifneq ($(call qcom-test,cpufreq-policy cpu-hotplug),)
 BR2_PACKAGE_STRESS_NG ?= y
